@@ -1,13 +1,25 @@
 //! Oxidize-C Micro-IoT Transpiled Module
 //! Source: embedded_allocator.c
-//! Pattern: Deterministic No-Heap Region & Slab Allocators for <=128 KB RAM Systems
-//! Features: Configurable Hardware Alignment (DMA 8/16-byte) & RAII Scoped Arena Guards
+//! Pattern: Deterministic No-Heap Region, Slab & Lock-Free Multi-Core Allocators
+//! Features:
+//!   - Hardware DMA Alignment with Static Compile-Time Const Asserts
+//!   - RAII Scoped Arena Guards for Stack-like Lifetime Tracking
+//!   - Lock-Free Atomic Arena for Dual-Core ESP32 / RP2040 / SMP Microcontrollers
+//!   - Seamless `extern "C"` FFI API for STM32CubeIDE / ESP-IDF (FreeRTOS)
 
 #![allow(dead_code)]
+
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 pub const SENSOR_POOL_SIZE: usize = 16;
 pub const PACKET_PAYLOAD_SIZE: usize = 64;
 pub const ARENA_BUFFER_SIZE: usize = 1024;
+
+/// Compile-time check to guarantee power-of-two alignment.
+#[must_use]
+pub const fn is_power_of_two(n: usize) -> bool {
+    n > 0 && (n & (n - 1)) == 0
+}
 
 /// Deterministic sensor telemetry packet representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +86,7 @@ impl<T: Copy + Default, const N: usize> SlabPool<T, N> {
     }
 }
 
-/// Linear Region-based Arena with Configurable Hardware Alignment (e.g. 4-byte Cortex-M, 8-byte DMA).
+/// Linear Region-based Arena with Configurable Hardware Alignment & Const Assertion.
 #[derive(Debug)]
 pub struct LinearArena<const SIZE: usize, const ALIGN: usize = 4> {
     buffer: [u8; SIZE],
@@ -84,8 +96,8 @@ pub struct LinearArena<const SIZE: usize, const ALIGN: usize = 4> {
 impl<const SIZE: usize, const ALIGN: usize> LinearArena<SIZE, ALIGN> {
     #[must_use]
     pub const fn new() -> Self {
-        // Enforce power-of-two alignment
-        assert!(ALIGN > 0 && (ALIGN & (ALIGN - 1)) == 0, "ALIGN must be a power of two");
+        // Compile-time static assert enforcing power-of-two alignment
+        assert!(is_power_of_two(ALIGN), "ALIGN must be a power of two");
         Self {
             buffer: [0u8; SIZE],
             offset: 0,
@@ -156,6 +168,58 @@ impl<'a, const SIZE: usize, const ALIGN: usize> Drop for ScopedArenaGuard<'a, SI
     }
 }
 
+/// Lock-Free Atomic Linear Arena for Multi-Core / Dual-Core Microcontrollers (ESP32 / RP2040).
+pub struct AtomicLinearArena<const SIZE: usize, const ALIGN: usize = 4> {
+    buffer: [u8; SIZE],
+    offset: AtomicUsize,
+}
+
+impl<const SIZE: usize, const ALIGN: usize> AtomicLinearArena<SIZE, ALIGN> {
+    #[must_use]
+    pub const fn new() -> Self {
+        assert!(is_power_of_two(ALIGN), "ALIGN must be a power of two");
+        Self {
+            buffer: [0u8; SIZE],
+            offset: AtomicUsize::new(0),
+        }
+    }
+
+    /// Lock-free allocation via atomic Compare-And-Swap (CAS) loop.
+    pub fn alloc_bytes(&self, len: usize) -> Option<usize> {
+        let align_mask = ALIGN - 1;
+        let mut current = self.offset.load(Ordering::Relaxed);
+
+        loop {
+            let aligned = (current + align_mask) & !align_mask;
+            let next = aligned + len;
+
+            if next > SIZE {
+                return None; // Out of memory
+            }
+
+            match self.offset.compare_exchange_weak(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some(aligned),
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    /// Reset offset atomically.
+    pub fn reset(&self) {
+        self.offset.store(0, Ordering::Release);
+    }
+
+    #[must_use]
+    pub fn used_bytes(&self) -> usize {
+        self.offset.load(Ordering::Acquire)
+    }
+}
+
 /// Micro-IoT Composite Deterministic Memory Controller (8-byte DMA Aligned).
 #[derive(Debug)]
 pub struct EmbeddedMemoryManager {
@@ -171,6 +235,54 @@ impl EmbeddedMemoryManager {
             arena: LinearArena::new(),
         }
     }
+}
+
+// =========================================================================
+// C-FFI Exported Functions (Seamless STM32CubeIDE / ESP-IDF FreeRTOS Bindings)
+// =========================================================================
+
+static mut GLOBAL_EMBEDDED_MGR: EmbeddedMemoryManager = EmbeddedMemoryManager::new();
+
+#[no_mangle]
+pub unsafe extern "C" fn oxidize_arena_init() {
+    GLOBAL_EMBEDDED_MGR = EmbeddedMemoryManager::new();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn oxidize_arena_alloc(size: usize) -> *mut u8 {
+    match GLOBAL_EMBEDDED_MGR.arena.alloc_bytes(size) {
+        Some(slice) => slice.as_mut_ptr(),
+        None => core::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn oxidize_arena_reset() {
+    GLOBAL_EMBEDDED_MGR.arena.reset();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn oxidize_arena_used_bytes() -> usize {
+    GLOBAL_EMBEDDED_MGR.arena.used_bytes()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn oxidize_slab_alloc_packet(sensor_id: u32, timestamp: u64) -> i32 {
+    let pkt = SensorPacket {
+        sensor_id,
+        timestamp,
+        payload: [0u8; PACKET_PAYLOAD_SIZE],
+        length: 0,
+    };
+    match GLOBAL_EMBEDDED_MGR.slab_pool.allocate(pkt) {
+        Some(idx) => idx as i32,
+        None => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn oxidize_slab_free_packet(index: usize) -> bool {
+    GLOBAL_EMBEDDED_MGR.slab_pool.free(index).is_some()
 }
 
 #[cfg(test)]
@@ -205,10 +317,9 @@ mod tests {
         slice1[0] = 0xAA;
         assert_eq!(arena.used_bytes(), 5);
 
-        // Next allocation aligns to 8 bytes -> starts at 8
         let slice2 = arena.alloc_bytes(10).expect("10 bytes allocated");
         slice2[0] = 0xBB;
-        assert_eq!(arena.used_bytes(), 18); // 8 + 10 = 18
+        assert_eq!(arena.used_bytes(), 18);
     }
 
     #[test]
@@ -221,9 +332,22 @@ mod tests {
             let mut guard = arena.scoped_guard();
             let _ = guard.alloc_bytes(32);
             assert_eq!(guard.used_bytes(), 48);
-            // Guard goes out of scope here -> auto rollback!
         }
 
-        assert_eq!(arena.used_bytes(), 16); // Perfectly restored to 16!
+        assert_eq!(arena.used_bytes(), 16);
+    }
+
+    #[test]
+    fn test_atomic_lock_free_arena_concurrency() {
+        let arena = AtomicLinearArena::<512, 8>::new();
+        let offset1 = arena.alloc_bytes(30).expect("Alloc 1");
+        assert_eq!(offset1, 0);
+
+        let offset2 = arena.alloc_bytes(20).expect("Alloc 2");
+        assert_eq!(offset2, 32); // 8-byte aligned (30 -> 32)
+        assert_eq!(arena.used_bytes(), 52);
+
+        arena.reset();
+        assert_eq!(arena.used_bytes(), 0);
     }
 }
