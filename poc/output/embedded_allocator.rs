@@ -350,4 +350,45 @@ mod tests {
         arena.reset();
         assert_eq!(arena.used_bytes(), 0);
     }
+
+    #[test]
+    fn test_atomic_lock_free_concurrency_stress_test() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const TOTAL_THREADS: usize = 8;
+        const ALLOCS_PER_THREAD: usize = 50;
+        const ALLOC_SIZE: usize = 16;
+        const ARENA_CAPACITY: usize = TOTAL_THREADS * ALLOCS_PER_THREAD * ALLOC_SIZE * 2;
+
+        let arena = Arc::new(AtomicLinearArena::<ARENA_CAPACITY, 8>::new());
+        let mut handles = Vec::with_capacity(TOTAL_THREADS);
+
+        for _ in 0..TOTAL_THREADS {
+            let arena_clone = Arc::clone(&arena);
+            handles.push(thread::spawn(move || {
+                let mut allocated_offsets = Vec::with_capacity(ALLOCS_PER_THREAD);
+                for _ in 0..ALLOCS_PER_THREAD {
+                    if let Some(offset) = arena_clone.alloc_bytes(ALLOC_SIZE) {
+                        allocated_offsets.push(offset);
+                    }
+                }
+                allocated_offsets
+            }));
+        }
+
+        let mut all_offsets = Vec::new();
+        for h in handles {
+            let offsets = h.join().expect("Thread finished without panic");
+            all_offsets.extend(offsets);
+        }
+
+        // Verify zero overlap across all 8 concurrent threads (Strict CAS Invariant)
+        assert_eq!(all_offsets.len(), TOTAL_THREADS * ALLOCS_PER_THREAD);
+        all_offsets.sort_unstable();
+        for window in all_offsets.windows(2) {
+            assert!(window[1] >= window[0] + ALLOC_SIZE, "Race condition detected: overlapping allocation offsets!");
+        }
+    }
 }
+

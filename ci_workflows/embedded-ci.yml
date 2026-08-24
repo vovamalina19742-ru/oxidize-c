@@ -1,0 +1,30 @@
+name: Embedded Bare-Metal Cross-Compilation CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  embedded-build:
+    name: Cross-Compile Embedded Targets
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - thumbv7em-none-eabihf       # ARM Cortex-M4/M7 (STM32F4/F7/H7)
+          - riscv32imc-unknown-none-elf # RISC-V (ESP32-C3 / RP2350)
+          - thumbv6m-none-eabi          # ARM Cortex-M0/M0+ (RP2040 / STM32F0)
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Bare-Metal Embedded Core (#![no_std])
+        run: |
+          cargo check --target ${{ matrix.target }} -p oxidize-core --no-default-features
