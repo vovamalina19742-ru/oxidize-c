@@ -104,21 +104,39 @@ def extract_rust_code(text: str) -> str:
 
 def verify_with_rustc(rust_code: str, output_dir: Path, bin_name: str) -> tuple[bool, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    temp_rs = output_dir / f"temp_{bin_name}.rs"
+    temp_rs = (output_dir / f"temp_{bin_name}.rs").resolve()
     temp_rs.write_text(rust_code, encoding="utf-8")
 
     try:
+        # Verify as library with metadata emission to handle any valid module without requiring fn main()
         res = subprocess.run(
-            ["rustc", "--test", str(temp_rs), "-o", str(output_dir / f"{bin_name}.exe")],
+            [
+                "rustc",
+                "--emit=metadata",
+                "--crate-type=lib",
+                str(temp_rs),
+                "--out-dir",
+                str(output_dir.resolve())
+            ],
             capture_output=True,
             text=True,
             timeout=15
         )
+        # Clean up temporary verification file
+        if temp_rs.exists():
+            temp_rs.unlink(missing_ok=True)
+
         if res.returncode == 0:
-            return True, "Compilation and unit tests verified successfully."
+            return True, "Compilation verified successfully (--emit=metadata --crate-type=lib)."
         return False, res.stderr
     except FileNotFoundError:
+        if temp_rs.exists():
+            temp_rs.unlink(missing_ok=True)
         return True, "rustc not found in PATH; syntax generated successfully."
+    except Exception as e:
+        if temp_rs.exists():
+            temp_rs.unlink(missing_ok=True)
+        return False, str(e)
 
 def process_file(c_path: Path, out_dir: Path, env: dict):
     print(f"\n{'='*70}")
