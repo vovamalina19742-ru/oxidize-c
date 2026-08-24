@@ -61,6 +61,12 @@ BENCHMARKS = [
         "rs_file": "ring_buffer.rs",
         "category": "Wraparound Indexing Queue",
     },
+    {
+        "name": "Micro-IoT Region & Slab Allocator",
+        "c_file": "benchmarks/embedded_allocator.c",
+        "rs_file": "embedded_allocator.rs",
+        "category": "No-Heap Deterministic (<=128KB)",
+    },
 ]
 
 def calculate_score(c_code: str, rust_code: str):
