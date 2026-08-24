@@ -1,0 +1,14 @@
+[package]
+name = "oxidize-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core AST analysis and memory ownership classifier for Oxidize-C"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+slotmap.workspace = true

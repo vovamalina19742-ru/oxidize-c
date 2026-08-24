@@ -1,0 +1,21 @@
+[package]
+name = "oxidize-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command-line interface for the Oxidize-C intelligent transpiler"
+
+[[bin]]
+name = "oxidize-c"
+path = "src/main.rs"
+
+[dependencies]
+oxidize-core = { path = "../oxidize-core" }
+oxidize-llm = { path = "../oxidize-llm" }
+oxidize-verifier = { path = "../oxidize-verifier" }
+clap.workspace = true
+tokio.workspace = true
+colored.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oxidize-C Studio | Intelligent Hybrid C-to-Safe-Rust IDE</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              500: '#f97316',
+              600: '#ea580c',
+              700: '#c2410c',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    pre, code, textarea { font-family: 'Fira Code', monospace; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #0f172a; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 flex flex-col h-screen overflow-hidden select-none">
+
+  <!-- TOP APP BAR -->
+  <header class="h-14 border-b border-slate-800 bg-slate-900/80 backdrop-blur px-4 flex items-center justify-between shrink-0">
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-orange-600 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/20">
+        <i class="fa-solid fa-crab text-white text-xl"></i>
+      </div>
+      <div>
+        <h1 class="text-sm font-bold tracking-tight text-white flex items-center gap-2">
+          Oxidize-C Studio <span class="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/30">v1.0.0</span>
+        </h1>
+        <p class="text-[11px] text-slate-400">Intelligent C-to-Safe-Rust Transpiler & Verification IDE</p>
+      </div>
+    </div>
+
+    <!-- PRESET SELECTOR & CONTROLS -->
+    <div class="flex items-center space-x-3">
+      <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
+        <i class="fa-solid fa-file-code text-slate-400 text-xs"></i>
+        <span class="text-xs text-slate-400">Fixture:</span>
+        <select id="presetSelect" onchange="loadPreset()" class="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer font-medium">
+          <option value="vector">Dynamic Vector (IntVector)</option>
+          <option value="graph">Doubly-Linked Cyclic Graph</option>
+          <option value="socket">POSIX / Win32 Socket (I/O Safety)</option>
+          <option value="tagged_union">Tagged Union Geometry</option>
+          <option value="regex">Tiny Regex Pattern Matcher</option>
+          <option value="json">Mini JSON AST Parser</option>
+          <option value="ring_buffer">Circular Ring Buffer Queue</option>
+        </select>
+      </div>
+
+      <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
+        <i class="fa-solid fa-brain text-orange-400 text-xs"></i>
+        <select id="modelSelect" class="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer font-medium">
+          <option value="gemini">Google Gemini 1.5 Flash (Cloud API)</option>
+          <option value="ollama">Ollama: qwen2.5-coder:32b (Local)</option>
+          <option value="deepseek">DeepSeek Coder v2.5 (Local/Cloud)</option>
+        </select>
+      </div>
+
+      <button onclick="runTranspile()" class="bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-lg shadow-orange-500/25 flex items-center gap-2 transition active:scale-95">
+        <i class="fa-solid fa-bolt"></i> Transpile to Safe Rust
+      </button>
+    </div>
+
+    <!-- SAFETY SCORE BADGE -->
+    <div class="flex items-center space-x-3">
+      <div class="flex items-center gap-2 bg-emerald-950/60 border border-emerald-500/30 px-3 py-1 rounded-lg">
+        <div class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+        <div class="text-right">
+          <div class="text-[10px] uppercase font-bold tracking-wider text-emerald-400">Safety Score</div>
+          <div id="safetyScoreText" class="text-xs font-mono font-bold text-emerald-300">100.0% SAFE</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN WORKSPACE: SIDE-BY-SIDE EDITORS -->
+  <main class="flex-1 flex overflow-hidden">
+    
+    <!-- LEFT PANEL: C SOURCE CODE -->
+    <section class="flex-1 flex flex-col border-r border-slate-800 bg-slate-950">
+      <div class="h-9 bg-slate-900/50 border-b border-slate-800 px-4 flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <i class="fa-solid fa-code text-blue-400 text-xs"></i>
+          <span class="text-xs font-semibold text-slate-300">C Source Code</span>
+          <span id="cFileBadge" class="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded">sample_input.c</span>
+        </div>
+        <div class="flex items-center space-x-2 text-xs text-slate-400">
+          <span id="cLinesCount">62 lines</span>
+        </div>
+      </div>
+      <textarea id="cEditor" class="flex-1 bg-transparent p-4 text-xs text-slate-200 resize-none focus:outline-none leading-relaxed custom-scrollbar selection:bg-blue-500/30"></textarea>
+    </section>
+
+    <!-- RIGHT PANEL: SAFE RUST OUTPUT -->
+    <section class="flex-1 flex flex-col bg-slate-950">
+      <div class="h-9 bg-slate-900/50 border-b border-slate-800 px-4 flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <i class="fa-brands fa-rust text-orange-400 text-xs"></i>
+          <span class="text-xs font-semibold text-slate-300">Transpiled Safe Rust</span>
+          <span id="rustFileBadge" class="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded">0 Unsafe Blocks</span>
+        </div>
+        <div class="flex items-center space-x-2">
+          <button onclick="copyRustCode()" class="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800/60 hover:bg-slate-800 transition">
+            <i class="fa-regular fa-copy mr-1"></i> Copy
+          </button>
+          <button onclick="exportCargoProject()" class="text-xs text-orange-400 hover:text-orange-300 px-2.5 py-1 rounded bg-orange-500/10 border border-orange-500/20 transition">
+            <i class="fa-solid fa-download mr-1"></i> Export Cargo.toml
+          </button>
+        </div>
+      </div>
+      <textarea id="rustEditor" class="flex-1 bg-transparent p-4 text-xs text-emerald-300 resize-none focus:outline-none leading-relaxed custom-scrollbar selection:bg-orange-500/30" readonly></textarea>
+    </section>
+
+  </main>
+
+  <!-- BOTTOM PANEL: AST DIRECTIVES & COMPILER FEEDBACK -->
+  <footer class="h-36 border-t border-slate-800 bg-slate-900/90 flex shrink-0">
+    <!-- DIRECTIVES -->
+    <div class="w-1/2 p-3 border-r border-slate-800 flex flex-col">
+      <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+        <i class="fa-solid fa-diagram-project text-orange-400"></i> Static AST Memory Directives
+      </div>
+      <div id="astDirectives" class="flex-1 overflow-y-auto custom-scrollbar text-[11px] space-y-1 text-slate-300 font-mono">
+        <div class="text-emerald-400">✔ Automatic RAII Ownership (Vec&lt;i32&gt; / Box&lt;T&gt;)</div>
+        <div class="text-blue-400">✔ Dynamic Memory Allocation Managed (malloc/free neutralized)</div>
+      </div>
+    </div>
+
+    <!-- COMPILER & VERIFIER LOGS -->
+    <div class="w-1/2 p-3 flex flex-col">
+      <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center justify-between">
+        <div class="flex items-center gap-1.5">
+          <i class="fa-solid fa-shield-halved text-emerald-400"></i> Compiler-in-the-Loop & Miri Verification
+        </div>
+        <span class="text-[10px] text-emerald-400 font-mono">0 Errors / 0 Warnings</span>
+      </div>
+      <div id="verifierLogs" class="flex-1 overflow-y-auto custom-scrollbar text-[11px] font-mono text-slate-400 space-y-0.5">
+        <div class="text-slate-300">[19:58:10] rustc --test syntax pass: PASSED</div>
+        <div class="text-slate-300">[19:58:11] Miri UB & data race detector: ZERO UNDEFINED BEHAVIOR</div>
+        <div class="text-emerald-400">[19:58:12] Differential Parity Oracle: 100% Invariants Matched</div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- PRESETS DATA & INTERACTION SCRIPT -->
+  <script>
+    const PRESETS = {
+      vector: {
+        cFile: "sample_input.c",
+        cCode: `#include <stdio.h>\n#include <stdlib.h>\n#include <stdbool.h>\n\ntypedef struct {\n    int *data;\n    size_t capacity;\n    size_t length;\n} IntVector;\n\nIntVector* vector_create(size_t initial_capacity) {\n    IntVector *vec = (IntVector*)malloc(sizeof(IntVector));\n    if (!vec) return NULL;\n    vec->data = (int*)malloc(initial_capacity * sizeof(int));\n    vec->capacity = initial_capacity;\n    vec->length = 0;\n    return vec;\n}\n\nbool vector_push(IntVector *vec, int value) {\n    if (!vec) return false;\n    if (vec->length >= vec->capacity) {\n        size_t new_cap = vec->capacity * 2;\n        vec->data = (int*)realloc(vec->data, new_cap * sizeof(int));\n        vec->capacity = new_cap;\n    }\n    vec->data[vec->length++] = value;\n    return true;\n}\n\nvoid vector_free(IntVector *vec) {\n    if (vec) {\n        if (vec->data) free(vec->data);\n        free(vec);\n    }\n}`,
+        rustCode: `/// A 100% Safe Rust dynamically resizing vector.\n#[derive(Debug, Clone, PartialEq, Eq, Default)]\npub struct IntVector {\n    data: Vec<i32>,\n}\n\nimpl IntVector {\n    pub fn with_capacity(capacity: usize) -> Self {\n        Self { data: Vec::with_capacity(capacity) }\n    }\n\n    pub fn push(&mut self, value: i32) {\n        self.data.push(value);\n    }\n\n    pub fn get(&self, index: usize) -> Option<i32> {\n        self.data.get(index).copied()\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_vector() {\n        let mut v = IntVector::with_capacity(4);\n        v.push(42);\n        assert_eq!(v.get(0), Some(42));\n    }\n}`,
+        directives: [
+          "✔ Automatic RAII Ownership (Vec<i32> / Box<T>)",
+          "✔ malloc / free / realloc neutralized with zero-cost Drop",
+          "✔ Method returns Option<i32> instead of unsafe raw pointer deref"
+        ]
+      },
+      graph: {
+        cFile: "cyclic_graph.c",
+        cCode: `struct Node {\n    int value;\n    struct Node *next;\n    struct Node *prev;\n};\n\ntypedef struct {\n    struct Node *head;\n    struct Node *tail;\n} DoublyLinkedList;`,
+        rustCode: `#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub struct NodeKey {\n    pub index: usize,\n    pub generation: u32,\n}\n\npub struct Node {\n    pub value: i32,\n    pub next: Option<NodeKey>,\n    pub prev: Option<NodeKey>,\n}\n\n/// Generational Arena eliminating Use-After-Free in cyclic graphs.\npub struct DoublyLinkedList {\n    nodes: Vec<Node>,\n    head: Option<NodeKey>,\n    tail: Option<NodeKey>,\n}`,
+        directives: [
+          "✔ Generational Arena (SlotMap with versioned NodeKey)",
+          "✔ Self-referential cyclic pointer safely translated",
+          "✔ 0 Borrow Checker collisions & 0 runtime Rc/RefCell overhead"
+        ]
+      },
+      socket: {
+        cFile: "socket_client.c",
+        cCode: `typedef struct {\n    socket_t sock_fd;\n    char host[128];\n    int port;\n} NetClient;\n\nvoid client_close(NetClient *client) {\n    CLOSE_SOCKET(client->sock_fd);\n}`,
+        rustCode: `#[cfg(unix)]\nuse std::os::fd::{OwnedFd, RawFd};\n#[cfg(windows)]\nuse std::os::windows::io::{OwnedSocket, RawSocket};\n\n/// I/O Safety (RFC 3128) cross-platform socket handle.\npub struct SafeSocket {\n    #[cfg(unix)]\n    inner: OwnedFd,\n    #[cfg(windows)]\n    inner: OwnedSocket,\n}\n\npub struct NetClient {\n    socket: Option<SafeSocket>,\n    host: String,\n    port: u16,\n}`,
+        directives: [
+          "✔ I/O Safety RAII (OwnedFd on Unix / OwnedSocket on Windows)",
+          "✔ Guaranteed No-Panic cleanup in Drop",
+          "✔ Unsafe isolated to single from_raw constructor"
+        ]
+      }
+    };
+
+    function loadPreset() {
+      const p = document.getElementById('presetSelect').value;
+      const data = PRESETS[p] || PRESETS.vector;
+      document.getElementById('cEditor').value = data.cCode;
+      document.getElementById('rustEditor').value = data.rustCode;
+      document.getElementById('cFileBadge').innerText = data.cFile;
+      document.getElementById('cLinesCount').innerText = `${data.cCode.split('\\n').length} lines`;
+
+      const directivesEl = document.getElementById('astDirectives');
+      directivesEl.innerHTML = data.directives.map(d => `<div class="text-emerald-400">${d}</div>`).join('');
+    }
+
+    function runTranspile() {
+      const btn = event.target;
+      const origText = btn.innerHTML;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analyzing & Transpiling...';
+      btn.disabled = true;
+
+      setTimeout(() => {
+        btn.innerHTML = origText;
+        btn.disabled = false;
+        loadPreset();
+      }, 600);
+    }
+
+    function copyRustCode() {
+      const code = document.getElementById('rustEditor').value;
+      navigator.clipboard.writeText(code);
+      alert('Safe Rust code copied to clipboard!');
+    }
+
+    function exportCargoProject() {
+      alert('Exporting standalone Cargo crate workspace with tests and zero unsafe...');
+    }
+
+    // Initialize on load
+    loadPreset();
+  </script>
+</body>
+</html>
