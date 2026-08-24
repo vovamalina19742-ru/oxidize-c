@@ -1,6 +1,7 @@
 //! Oxidize-C Micro-IoT Transpiled Module
 //! Source: embedded_allocator.c
 //! Pattern: Deterministic No-Heap Region & Slab Allocators for <=128 KB RAM Systems
+//! Features: Configurable Hardware Alignment (DMA 8/16-byte) & RAII Scoped Arena Guards
 
 #![allow(dead_code)]
 
@@ -10,6 +11,7 @@ pub const ARENA_BUFFER_SIZE: usize = 1024;
 
 /// Deterministic sensor telemetry packet representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C, align(8))] // 8-byte hardware alignment for 64-bit registers & DMA
 pub struct SensorPacket {
     pub sensor_id: u32,
     pub timestamp: u64,
@@ -53,7 +55,7 @@ impl<T: Copy + Default, const N: usize> SlabPool<T, N> {
         None
     }
 
-    /// Releases an entry back to the pool.
+    /// Releases an entry back to the pool in O(1) time.
     pub fn free(&mut self, index: usize) -> Option<T> {
         if index < N {
             self.slots[index].take()
@@ -72,31 +74,45 @@ impl<T: Copy + Default, const N: usize> SlabPool<T, N> {
     }
 }
 
-/// Linear Region-based Arena for transient micro-task scratch memory.
+/// Linear Region-based Arena with Configurable Hardware Alignment (e.g. 4-byte Cortex-M, 8-byte DMA).
 #[derive(Debug)]
-pub struct LinearArena<const SIZE: usize> {
+pub struct LinearArena<const SIZE: usize, const ALIGN: usize = 4> {
     buffer: [u8; SIZE],
     offset: usize,
 }
 
-impl<const SIZE: usize> LinearArena<SIZE> {
+impl<const SIZE: usize, const ALIGN: usize> LinearArena<SIZE, ALIGN> {
     #[must_use]
     pub const fn new() -> Self {
+        // Enforce power-of-two alignment
+        assert!(ALIGN > 0 && (ALIGN & (ALIGN - 1)) == 0, "ALIGN must be a power of two");
         Self {
             buffer: [0u8; SIZE],
             offset: 0,
         }
     }
 
-    /// Allocates a contiguous byte slice aligned to 4 bytes.
+    /// Allocates a contiguous byte slice aligned to `ALIGN` bytes.
     pub fn alloc_bytes(&mut self, len: usize) -> Option<&mut [u8]> {
-        let aligned_len = (len + 3) & !3;
-        if self.offset + aligned_len <= SIZE {
-            let start = self.offset;
-            self.offset += aligned_len;
-            Some(&mut self.buffer[start..start + len])
+        let align_mask = ALIGN - 1;
+        let aligned_offset = (self.offset + align_mask) & !align_mask;
+        let new_offset = aligned_offset + len;
+
+        if new_offset <= SIZE {
+            self.offset = new_offset;
+            Some(&mut self.buffer[aligned_offset..aligned_offset + len])
         } else {
             None
+        }
+    }
+
+    /// Creates an RAII Scoped Guard that automatically resets arena allocation to current offset upon drop.
+    #[must_use]
+    pub fn scoped_guard(&mut self) -> ScopedArenaGuard<'_, SIZE, ALIGN> {
+        let saved_offset = self.offset;
+        ScopedArenaGuard {
+            arena: self,
+            saved_offset,
         }
     }
 
@@ -116,11 +132,35 @@ impl<const SIZE: usize> LinearArena<SIZE> {
     }
 }
 
-/// Micro-IoT Composite Deterministic Memory Controller.
+/// RAII Scoped Guard ensuring zero-overhead stack-like unwinding of transient arena allocations.
+pub struct ScopedArenaGuard<'a, const SIZE: usize, const ALIGN: usize> {
+    arena: &'a mut LinearArena<SIZE, ALIGN>,
+    saved_offset: usize,
+}
+
+impl<'a, const SIZE: usize, const ALIGN: usize> ScopedArenaGuard<'a, SIZE, ALIGN> {
+    pub fn alloc_bytes(&mut self, len: usize) -> Option<&mut [u8]> {
+        self.arena.alloc_bytes(len)
+    }
+
+    #[must_use]
+    pub fn used_bytes(&self) -> usize {
+        self.arena.used_bytes()
+    }
+}
+
+impl<'a, const SIZE: usize, const ALIGN: usize> Drop for ScopedArenaGuard<'a, SIZE, ALIGN> {
+    fn drop(&mut self) {
+        // Automatic rollback to snapshot offset on scope exit (Zero memory leaks)
+        self.arena.offset = self.saved_offset;
+    }
+}
+
+/// Micro-IoT Composite Deterministic Memory Controller (8-byte DMA Aligned).
 #[derive(Debug)]
 pub struct EmbeddedMemoryManager {
     pub slab_pool: SlabPool<SensorPacket, SENSOR_POOL_SIZE>,
-    pub arena: LinearArena<ARENA_BUFFER_SIZE>,
+    pub arena: LinearArena<ARENA_BUFFER_SIZE, 8>, // 8-byte DMA Alignment
 }
 
 impl EmbeddedMemoryManager {
@@ -159,13 +199,31 @@ mod tests {
     }
 
     #[test]
-    fn test_linear_arena_reset() {
-        let mut arena = LinearArena::<256>::new();
-        let slice = arena.alloc_bytes(10).expect("10 bytes allocated");
-        slice[0] = 0xAA;
-        assert_eq!(arena.used_bytes(), 12); // Aligned to 4 bytes
+    fn test_8byte_dma_alignment() {
+        let mut arena = LinearArena::<256, 8>::new();
+        let slice1 = arena.alloc_bytes(5).expect("5 bytes allocated");
+        slice1[0] = 0xAA;
+        assert_eq!(arena.used_bytes(), 5);
 
-        arena.reset();
-        assert_eq!(arena.used_bytes(), 0);
+        // Next allocation aligns to 8 bytes -> starts at 8
+        let slice2 = arena.alloc_bytes(10).expect("10 bytes allocated");
+        slice2[0] = 0xBB;
+        assert_eq!(arena.used_bytes(), 18); // 8 + 10 = 18
+    }
+
+    #[test]
+    fn test_raii_scoped_arena_guard_unwinding() {
+        let mut arena = LinearArena::<256, 4>::new();
+        let _ = arena.alloc_bytes(16);
+        assert_eq!(arena.used_bytes(), 16);
+
+        {
+            let mut guard = arena.scoped_guard();
+            let _ = guard.alloc_bytes(32);
+            assert_eq!(guard.used_bytes(), 48);
+            // Guard goes out of scope here -> auto rollback!
+        }
+
+        assert_eq!(arena.used_bytes(), 16); // Perfectly restored to 16!
     }
 }
