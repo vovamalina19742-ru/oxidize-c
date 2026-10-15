@@ -2,9 +2,9 @@ name: Oxidize-C CI Pipeline
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
 
 jobs:
   test:
@@ -34,8 +34,11 @@ jobs:
         run: |
           python poc/diff_test_oracle.py
 
+      - name: Run Workspace Tests
+        run: cargo test --workspace
+
       - name: Run Cargo Format Check
         run: cargo fmt --all -- --check
 
-      - name: Run Cargo Clippy (Zero Warnings)
+      - name: Run Cargo Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

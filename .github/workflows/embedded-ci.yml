@@ -25,6 +25,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Build Bare-Metal Embedded Core (#![no_std])
+      - name: Build Bare-Metal Embedded Allocator (#![no_std])
         run: |
-          cargo check --target ${{ matrix.target }} -p oxidize-core --no-default-features
+          cargo check --target ${{ matrix.target }} -p oxidize-alloc --no-default-features

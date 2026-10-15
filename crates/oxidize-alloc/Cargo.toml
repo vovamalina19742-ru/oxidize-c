@@ -1,0 +1,10 @@
+[package]
+name = "oxidize-alloc"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deterministic #![no_std] bare-metal embedded allocator and slab pool for Oxidize-C"
+
+[dependencies]

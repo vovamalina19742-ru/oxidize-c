@@ -132,7 +132,7 @@ def verify_with_rustc(rust_code: str, output_dir: Path, bin_name: str) -> tuple[
     except FileNotFoundError:
         if temp_rs.exists():
             temp_rs.unlink(missing_ok=True)
-        return True, "rustc not found in PATH; syntax generated successfully."
+        return False, "Error: rustc compiler not found in PATH."
     except Exception as e:
         if temp_rs.exists():
             temp_rs.unlink(missing_ok=True)

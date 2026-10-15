@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/oxidize-alloc",
     "crates/oxidize-core",
     "crates/oxidize-llm",
     "crates/oxidize-verifier",
